@@ -1,13 +1,13 @@
 // Story / Dojo / Objective layer for LEXICON RIDERS
 (function () {
   const D = window.STORY_DATA;
-  const KEY = 'lexiconRidersStory2';
+  const KEY = 'lexiconRidersStory3';
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
   const S = window.Story = {
-    st: { started: false, ch: 0, introDone: {}, boxes: {}, hist: [], bondOK: 0, grammarOK: 0, raceDone: false, bossDone: {}, ended: false },
+    st: { started: false, ch: 0, introDone: {}, boxes: {}, hist: [], bondOK: 0, grammarOK: 0, races: 0, bossWins: {}, ended: false },
     busy: false, lastN: 0,
 
     load() { try { const v = JSON.parse(localStorage.getItem(KEY) || 'null'); if (v) Object.assign(S.st, v); } catch (e) {} },
@@ -71,17 +71,31 @@
     },
 
     // ---------- Goal bar & chapter flow ----------
+    actName() { const c = S.chap(); return c.act ? '【' + c.act + '】' : ''; },
+    reqMet(c) {
+      const q = c.req || {};
+      if (q.words && S.mastered() < q.words) return false;
+      if (q.bond && S.st.bondOK < q.bond) return false;
+      if (q.grammar && S.st.grammarOK < q.grammar) return false;
+      if (q.races && S.st.races < q.races) return false;
+      if (q.boss) for (const k in q.boss) if ((S.st.bossWins[k] || 0) < q.boss[k]) return false;
+      if (q.score && S.score() < q.score) return false;
+      return true;
+    },
+    forcedBoss() { const q = S.chap().req || {}; if (!q.boss) return null; for (const k in q.boss) if ((S.st.bossWins[k] || 0) < q.boss[k]) return +k; return null; },
     chap() { return D.chapters[Math.min(S.st.ch, D.chapters.length - 1)]; },
     renderGoal() {
       const el = $('st-goal'); if (!el) return;
       if (S.st.ended) { el.innerHTML = '🏆 クリア！ Resonance ' + S.score() + ' ／ 好きなだけ道場で復習できます'; return; }
-      const c = S.chap(); const A = window.App; const sc = S.score();
-      let extra = '';
-      if (S.st.ch === 0) extra = `（${S.mastered()}/6）`;
-      else if (S.st.ch === 1) extra = `（${Math.min(2, S.st.bondOK)}/2）`;
-      else if (c.needGrammar) extra = `（文法 ${Math.min(c.needGrammar, S.st.grammarOK)}/${c.needGrammar} ・ Resonance ${sc}/${c.needScore}）`;
-      else if (c.needScore) extra = `（Resonance ${sc}/${c.needScore}）`;
-      el.innerHTML = `<b>🎯 ${esc(c.jp)}</b> ${esc(c.goal)} ${extra}<span class="st-sub"> ／ 目標 750 まであと ${Math.max(0, 750 - sc)}</span>`;
+      const c = S.chap(); const sc = S.score(); const q = c.req || {}; const p = [];
+      if (q.words) p.push(`単語⭐${Math.min(q.words, S.mastered())}/${q.words}`);
+      if (q.bond) p.push(`会話${Math.min(q.bond, S.st.bondOK)}/${q.bond}`);
+      if (q.grammar) p.push(`文法${Math.min(q.grammar, S.st.grammarOK)}/${q.grammar}`);
+      if (q.races) p.push(`レース${Math.min(q.races, S.st.races)}/${q.races}`);
+      if (q.boss) Object.keys(q.boss).forEach((k) => p.push(`ボス${Math.min(q.boss[k], S.st.bossWins[k] || 0)}/${q.boss[k]}`));
+      if (q.score) p.push(`Resonance ${sc}/${q.score}`);
+      const extra = '（' + p.join(' ・ ') + '）';
+      el.innerHTML = `<b>🎯 ${esc(S.actName())} ${esc(c.jp)}</b> ${esc(c.goal)} ${extra}<span class="st-sub"> ／ 目標 750 まであと ${Math.max(0, 750 - sc)}</span>`;
     },
     startChapter() {
       const c = S.chap(); S.renderGoal(); S.applyLocks();
@@ -93,7 +107,7 @@
     applyLocks() {
       const ch = S.st.ch;
       const lock = (id, locked) => { const b = $(id); if (b) { b.style.opacity = locked ? '0.4' : ''; b.dataset.locked = locked ? '1' : ''; } };
-      lock('tab-RACE', ch < 2); lock('tab-HUNT', ch < 3);
+      lock('tab-RACE', ch < D.unlock.race); lock('tab-HUNT', ch < D.unlock.hunt);
     },
     complete() {
       const c = S.chap(); S.busy = true;
@@ -117,24 +131,13 @@
     },
     tick() {
       const A = window.App; if (!S.st.started || S.st.ended || S.busy) return;
-      const c = S.chap(); const ch = S.st.ch;
-      if (A.race && A.race.bossDist <= 0) S.st.raceDone = true;
+      const c = S.chap();
       if (A.scene === 'HUNT' && A.hunt.parts.every((p) => p.broken)) {
-        const idx = A.questIdx % 3;
-        if (!S.st.bossDone[idx]) { S.st.bossDone[idx] = true; S.save(); }
+        const idx = A.questIdx % 3; S.st.bossWins[idx] = (S.st.bossWins[idx] || 0) + 1; S.save();
         A.hunt.parts.forEach((p) => { p.hp = p.maxHp; p.broken = false; });
-        A.hunt.bossHp = 1800;
-        S.renderGoal();
+        A.hunt.bossHp = 1800; S.renderGoal();
       }
-      let ok = false;
-      if (ch === 0) ok = S.mastered() >= 6;
-      else if (ch === 1) ok = S.st.bondOK >= 2;
-      else if (ch === 2) ok = S.st.raceDone;
-      else {
-        const bossOK = S.st.bossDone[c.boss];
-        ok = bossOK && (!c.needScore || S.score() >= c.needScore) && (!c.needGrammar || S.st.grammarOK >= c.needGrammar);
-        if (bossOK && !ok && !S._warned) { S._warned = true; S.say([{ who: 'emma', name: 'Emma', en: 'The monster is down, but your Resonance is not high enough yet. Keep studying at the Dojo!', jp: '魔物は倒したけど、共鳴値がまだ足りないわ。道場でもっと勉強しましょう！' }], () => { S._warned = false; S.st.bossDone[c.boss] = false; }); }
-      }
+      const ok = S.reqMet(c);
       if (ok && S.ready()) S.complete();
     },
 
@@ -253,8 +256,8 @@
       const oSwitch = A.switchScene.bind(A);
       A.switchScene = function (s) {
         if (S.st.started && !S.st.ended) {
-          if (s === 'HUNT' && A.scene === 'RACE' && S.st.ch < 3) { if (A.race.bossDist <= 0) S.st.raceDone = true; S.save(); return oSwitch('WORLD'); }
-          if ((s === 'RACE' && S.st.ch < 2) || (s === 'HUNT' && S.st.ch < 3)) {
+          if (A.scene === 'RACE' && s === 'HUNT' && A.race.bossDist <= 0) { S.st.races++; S.save(); S.renderGoal(); if (S.st.ch < D.unlock.hunt) return oSwitch('WORLD'); }
+          if ((s === 'RACE' && S.st.ch < D.unlock.race) || (s === 'HUNT' && S.st.ch < D.unlock.hunt)) {
             S.busy || S.say([{ who: 'emma', name: 'Emma', en: 'Not yet, Kael. Finish your current mission first.', jp: 'まだよ、ケイル。まず今の任務を終わらせて。' }]);
             return;
           }
@@ -264,12 +267,12 @@
       const oBond = A.answerBond.bind(A);
       A.answerBond = function (i) { const n = S.lastN; oBond(i); if (S.lastN > n && S.lastOK) { S.st.bondOK++; S.save(); S.renderGoal(); } };
       const oHunt = A.selectBoss.bind(A);
-      A.selectBoss = function (i) { if (S.st.started && !S.st.ended && S.st.ch >= 3) { const c = S.chap(); if (c.boss !== undefined && i !== c.boss && !S.st.bossDone[i]) i = c.boss; } return oHunt(i); };
+      A.selectBoss = function (i) { const f = S.forcedBoss(); if (S.st.started && !S.st.ended && f !== null) i = f; return oHunt(i); };
 
       // start state: only story-bound boss on HUNT entry
       const oSwitch2 = A.switchScene;
       A.switchScene = function (s) {
-        if (s === 'HUNT' && S.st.started && !S.st.ended) { const c = S.chap(); if (c.boss !== undefined && A.questIdx % 3 !== c.boss) { A.questIdx = c.boss; A.hunt.parts.forEach((p) => { p.hp = p.maxHp; p.broken = false; }); A.hunt.bossHp = 1800; A.syncPortraitsUI && A.syncPortraitsUI(); } }
+        if (s === 'HUNT' && S.st.started && !S.st.ended) { const f = S.forcedBoss(); if (f !== null && A.questIdx % 3 !== f) { A.questIdx = f; A.hunt.parts.forEach((p) => { p.hp = p.maxHp; p.broken = false; }); A.hunt.bossHp = 1800; A.syncPortraitsUI && A.syncPortraitsUI(); } }
         return oSwitch2.call(A, s);
       };
 
