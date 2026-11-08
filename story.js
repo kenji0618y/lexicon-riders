@@ -18,7 +18,7 @@
     seen() { return D.vocab.filter((v) => (S.st.boxes[v[0]] || 0) > 0).length; },
     accuracy() { const h = S.st.hist.slice(-50); return h.length ? h.reduce((a, b) => a + b, 0) / h.length : 0.5; },
     score() {
-      const mastery = 0.5 * (S.mastered() / D.vocab.length) + 0.5 * S.accuracy();
+      const mastery = 0.5 * Math.min(1, S.mastered() / 80) + 0.5 * S.accuracy();
       const s = 450 + 375 * Math.min(1, mastery / 0.8);
       return Math.max(450, Math.min(750, Math.round(s / 5) * 5));
     },
